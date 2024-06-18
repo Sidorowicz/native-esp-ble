@@ -1,0 +1,133 @@
+import React, {useEffect, useRef, useState} from 'react';
+import {Text, View, PermissionsAndroid, ScrollView} from 'react-native';
+import {BleManager} from 'react-native-ble-plx';
+import {atob} from 'react-native-quick-base64';
+
+async function requestLocationPermission() {
+  try {
+    // const grantsred = await PermissionsAndroid.requestMultiple([
+    // PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    // PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+    // PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+    // ]);
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+      {
+        title: 'title',
+        message: 'message',
+        buttonNeutral: 'neutral',
+        buttonNegative: 'negative',
+        buttonPositive: 'possitive',
+      },
+    );
+    if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+      console.log('granted');
+    } else {
+      console.log('not granted');
+    }
+  } catch (err) {
+    console.log(err);
+  }
+}
+
+requestLocationPermission();
+
+const bleManager = new BleManager();
+
+const SERVICE_UUID = '07871c7d-0058-4f39-bb29-9ccd432ae8b2';
+const STEP_DATA_CHAR_UUID = 'ef51b829-20e8-402a-a254-53d6d6b767fd';
+
+function App(): React.JSX.Element {
+  const [devId, setDevId] = useState('');
+  const [stepCount, setStep] = useState<string>('');
+  const [status, setStatus] = useState('');
+
+  const deviceRef = useRef(null);
+
+  const searchAndConnectToDevice = () => {
+    bleManager.startDeviceScan(null, null, (error, device) => {
+      if (error) {
+        console.log(error);
+        setStatus('err');
+        return;
+      }
+      if (device.name === 'Tachograf') {
+        bleManager.stopDeviceScan();
+        setStatus('laczenie');
+        connectToDevice(device);
+      }
+    });
+  };
+
+  useEffect(() => {
+    searchAndConnectToDevice();
+  });
+
+  const connectToDevice = (device: any) => {
+    return device
+      .connect()
+      .then((device: any) => {
+        setDevId(device.id);
+        setStatus('polaczono');
+        deviceRef.current = device;
+        return device.discoverAllServicesAndCharacteristics();
+      })
+      .then((device: any) => {
+        return device.services();
+      })
+      .then((services: any) => {
+        let service = services.find(
+          (service: any) => service.uuid === SERVICE_UUID,
+        );
+        return service.characteristics();
+      })
+      .then((characteristics: any) => {
+        let stepDataCharacteristics = characteristics.find(
+          (char: any) => char.uuid === STEP_DATA_CHAR_UUID,
+        );
+        setStep(stepDataCharacteristics);
+        stepDataCharacteristics.monitor((error: any, char: any) => {
+          if (error) {
+            console.log(error);
+            return;
+          }
+          console.log(char);
+          const rawStepData = atob(char.value);
+          setStep(rawStepData);
+        });
+      });
+  };
+
+  useEffect(() => {
+    const subscription = bleManager.onDeviceDisconnected(
+      devId,
+      (error: any, _device: any) => {
+        if (error) {
+          console.log('disc with error');
+        }
+        setStatus('disc');
+        setStep('0');
+        if (deviceRef.current) {
+          setStatus('reconnecting');
+          connectToDevice(deviceRef.current)
+            .then(() => setStatus('conn'))
+            .catch((error: any) => {
+              console.log(error);
+              setStatus('failed');
+            });
+        }
+      },
+    );
+    return () => subscription.remove();
+  }, [devId]);
+
+  return (
+    <ScrollView>
+      <Text>123</Text>
+      <Text>{status}</Text>
+      <Text>{JSON.stringify(stepCount)}</Text>
+    </ScrollView>
+  );
+}
+
+export default App;
